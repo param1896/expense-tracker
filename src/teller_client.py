@@ -2,6 +2,7 @@
 import os
 import base64
 import tempfile
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Dict
@@ -39,8 +40,15 @@ def fetch_transactions(days_back: int = 16, start_date: str = None) -> List[Dict
     if start_date is None:
         start_date = (date.today() - timedelta(days=days_back)).isoformat()
 
-    # Get all accounts, filter for credit cards
-    accounts_resp = session.get(f"{TELLER_API}/accounts")
+    # Get all accounts — retry up to 3 times; Teller dev environment returns
+    # intermittent 404/5xx on /accounts that resolve on retry
+    for attempt in range(3):
+        accounts_resp = session.get(f"{TELLER_API}/accounts")
+        if accounts_resp.status_code == 200:
+            break
+        if attempt < 2:
+            print(f"  /accounts returned {accounts_resp.status_code}, retrying in 3s...")
+            time.sleep(3)
     accounts_resp.raise_for_status()
     all_accounts = accounts_resp.json()
     accounts = [
