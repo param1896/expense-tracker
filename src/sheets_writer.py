@@ -103,23 +103,23 @@ def _delete_existing_charts(service, spreadsheet_id: str, meta: dict, sheet_id: 
 
 
 def _build_chart_requests(
-    data_sheet_id: int,    # Dashboard tab — where data lives
-    charts_sheet_id: int,  # Charts tab — where charts are anchored
-    pie_data_rows: Tuple[int, int],    # (start_row_idx, end_row_idx) data only, no header
-    bar_section_rows: Tuple[int, int], # (header_row_idx, end_row_idx) includes header
+    charts_sheet_id: int,              # Charts tab — both data AND anchor live here
+    pie_data_rows: Tuple[int, int],    # (start_row_idx, end_row_idx) within Charts tab
+    bar_section_rows: Tuple[int, int], # (header_row_idx, end_row_idx) within Charts tab
     num_categories: int,
 ) -> list:
     """
-    Build batchUpdate requests for two charts on the Charts tab:
+    Build batchUpdate requests for two charts on the Charts tab.
+    Both the data source ranges and chart anchor are on the Charts tab —
+    no cross-tab references, which avoids the "Add a series" rendering issue.
+
     1. Pie chart — This Month's Breakdown, labels show dollar values
     2. Stacked column bar chart — Monthly spending by category over time
-    Data sourced from Dashboard tab; charts anchored on Charts tab.
     """
 
-    def data_rng(start_row, end_row, start_col, end_col):
-        """Range pointing at the Dashboard data tab."""
+    def rng(start_row, end_row, start_col, end_col):
         return {
-            'sheetId': data_sheet_id,
+            'sheetId': charts_sheet_id,
             'startRowIndex': start_row,
             'endRowIndex': end_row,
             'startColumnIndex': start_col,
@@ -127,16 +127,12 @@ def _build_chart_requests(
         }
 
     def anchor(row, col):
-        """Position anchor on the Charts tab."""
         return {'sheetId': charts_sheet_id, 'rowIndex': row, 'columnIndex': col}
 
     pie_start, pie_end = pie_data_rows
     bar_header, bar_end = bar_section_rows
 
-    # ── Pie chart ──────────────────────────────────────────────────────────
-    # Anchored at top-left of Charts tab (row 0, col 0)
-    # Domain: Dashboard col A = "Category ($amount)" labels
-    # Series: Dashboard col B = amounts
+    # Pie data is in cols A-B of Charts tab; charts float to the right (col 3+)
     pie_chart = {
         'addChart': {
             'chart': {
@@ -146,16 +142,16 @@ def _build_chart_requests(
                         'legendPosition': 'LABELED_LEGEND',
                         'pieHole': 0,
                         'domain': {
-                            'sourceRange': {'sources': [data_rng(pie_start, pie_end, 0, 1)]}
+                            'sourceRange': {'sources': [rng(pie_start, pie_end, 0, 1)]}
                         },
                         'series': {
-                            'sourceRange': {'sources': [data_rng(pie_start, pie_end, 1, 2)]}
+                            'sourceRange': {'sources': [rng(pie_start, pie_end, 1, 2)]}
                         },
                     },
                 },
                 'position': {
                     'overlayPosition': {
-                        'anchorCell': anchor(0, 0),
+                        'anchorCell': anchor(0, 3),
                         'widthPixels': 680,
                         'heightPixels': 460,
                     }
@@ -164,14 +160,11 @@ def _build_chart_requests(
         }
     }
 
-    # ── Stacked column bar chart ───────────────────────────────────────────
-    # Anchored below the pie chart on the Charts tab (row 28, col 0)
-    # bar_header row on Dashboard: "Month | Cat1 | Cat2 | ..."
-    # Domain: Month column; Series: one per active category
+    # Bar data starts at bar_header row in Charts tab
     bar_series = [
         {
             'series': {
-                'sourceRange': {'sources': [data_rng(bar_header, bar_end, col, col + 1)]}
+                'sourceRange': {'sources': [rng(bar_header, bar_end, col, col + 1)]}
             },
             'targetAxis': 'LEFT_AXIS',
         }
@@ -193,7 +186,7 @@ def _build_chart_requests(
                         ],
                         'domains': [{
                             'domain': {
-                                'sourceRange': {'sources': [data_rng(bar_header, bar_end, 0, 1)]}
+                                'sourceRange': {'sources': [rng(bar_header, bar_end, 0, 1)]}
                             }
                         }],
                         'series': bar_series,
@@ -201,7 +194,7 @@ def _build_chart_requests(
                 },
                 'position': {
                     'overlayPosition': {
-                        'anchorCell': anchor(28, 0),
+                        'anchorCell': anchor(bar_header + 1, 3),
                         'widthPixels': 900,
                         'heightPixels': 500,
                     }
@@ -221,20 +214,14 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     ws = _get_or_create_worksheet(spreadsheet, 'Dashboard')
     ws.clear()
 
-    # Resolve sheet IDs and ensure Charts tab exists
+    # Ensure Charts tab exists (create it now so gspread can find it later)
     meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    sheet_ids = {s['properties']['title']: s['properties']['sheetId'] for s in meta['sheets']}
-    dashboard_sheet_id = sheet_ids['Dashboard']
-
-    if 'Charts' not in sheet_ids:
+    sheet_titles = {s['properties']['title'] for s in meta['sheets']}
+    if 'Charts' not in sheet_titles:
         service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id,
             body={'requests': [{'addSheet': {'properties': {'title': 'Charts'}}}]},
         ).execute()
-        # Refresh meta to get new Charts sheet ID
-        meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-        sheet_ids = {s['properties']['title']: s['properties']['sheetId'] for s in meta['sheets']}
-    charts_sheet_id = sheet_ids['Charts']
 
     if not all_transactions:
         ws.update('A1', [['No transaction data available.']])
@@ -371,33 +358,52 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     # Write all data in one API call
     ws.update('A1', all_rows)
 
+    # ── Write chart source data directly to Charts tab ─────────────────────
+    # Both pie and bar source data live on the Charts tab so charts have no
+    # cross-tab references (cross-tab refs cause "Add a series" in Sheets API).
+    ws_charts = _get_or_create_worksheet(spreadsheet, 'Charts')
+    ws_charts.clear()
+
+    charts_rows: List[list] = []
+    charts_row = 0
+
+    # Pie source: col A = label, col B = amount (no header row — pie doesn't need one)
+    pie_charts_start = charts_row
+    for label, amt, _pct in [all_rows[r] for r in range(pie_data_start, pie_data_end)]:
+        charts_rows.append([label, amt])
+        charts_row += 1
+    pie_charts_end = charts_row
+
+    # Gap between pie and bar data
+    charts_rows.append([])
+    charts_rows.append([])
+    charts_row += 2
+
+    # Bar source: "Month | Cat1 | Cat2 | ..."
+    bar_charts_header = charts_row
+    charts_rows.append(['Month'] + active_cats)
+    charts_row += 1
+    for p in periods:
+        charts_rows.append([p] + [round(pivot[p].get(c, 0), 2) for c in active_cats])
+        charts_row += 1
+    bar_charts_end = charts_row
+
+    ws_charts.update('A1', charts_rows)
+    print(f"  Wrote chart data to Charts tab: pie rows {pie_charts_start}–{pie_charts_end}, bar rows {bar_charts_header}–{bar_charts_end}, {len(active_cats)} categories")
+
     # Delete existing charts from Charts tab and redraw with correct row positions
-    # Refresh meta after data write so chart IDs are current
     meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    sheet_ids = {s['properties']['title']: s['properties']['sheetId'] for s in meta['sheets']}
+    charts_sheet_id = sheet_ids['Charts']
     _delete_existing_charts(service, spreadsheet_id, meta, charts_sheet_id)
     chart_requests = _build_chart_requests(
-        data_sheet_id=dashboard_sheet_id,
         charts_sheet_id=charts_sheet_id,
-        pie_data_rows=(pie_data_start, pie_data_end),
-        bar_section_rows=(bar_header_row, bar_data_end),
+        pie_data_rows=(pie_charts_start, pie_charts_end),
+        bar_section_rows=(bar_charts_header, bar_charts_end),
         num_categories=len(active_cats),
     )
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={'requests': chart_requests},
     ).execute()
-
-    # Verify: print what the charts actually reference
-    meta2 = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    for sheet in meta2['sheets']:
-        for chart in sheet.get('charts', []):
-            anchor = chart.get('position', {}).get('overlayPosition', {}).get('anchorCell', {})
-            spec = chart.get('spec', {})
-            pie = spec.get('pieChart')
-            basic = spec.get('basicChart')
-            if pie:
-                src = pie.get('series', {}).get('sourceRange', {}).get('sources', [{}])[0]
-                print(f"  [chart] PIE on sheetId={anchor.get('sheetId')} → data sheetId={src.get('sheetId')} rows {src.get('startRowIndex')}..{src.get('endRowIndex')}")
-            if basic:
-                src = basic.get('series', [{}])[0].get('series', {}).get('sourceRange', {}).get('sources', [{}])[0]
-                print(f"  [chart] BAR on sheetId={anchor.get('sheetId')} → data sheetId={src.get('sheetId')} rows {src.get('startRowIndex')}..{src.get('endRowIndex')}")
+    print(f"  Charts created on Charts tab (sheetId={charts_sheet_id})")
