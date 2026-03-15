@@ -371,6 +371,16 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     # Write all data in one API call
     ws.update('A1', all_rows)
 
+    # Debug: print positions and a category sample to diagnose chart issues
+    sample_cats = list({t.get('claude_category', '') for t in all_transactions})[:8]
+    print(f"  [chart debug] dashboard_sheet_id={dashboard_sheet_id} charts_sheet_id={charts_sheet_id}")
+    print(f"  [chart debug] pie rows {pie_data_start}..{pie_data_end}  bar rows {bar_header_row}..{bar_data_end}  active_cats={len(active_cats)}")
+    print(f"  [chart debug] sample categories in data: {sample_cats}")
+    if pie_data_start < len(all_rows):
+        print(f"  [chart debug] pie row[0]: {all_rows[pie_data_start]}")
+    if bar_header_row < len(all_rows):
+        print(f"  [chart debug] bar header row: {all_rows[bar_header_row]}")
+
     # Delete existing charts from Charts tab and redraw with correct row positions
     # Refresh meta after data write so chart IDs are current
     meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
