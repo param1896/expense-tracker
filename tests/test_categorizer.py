@@ -47,3 +47,19 @@ def test_categories_contains_expected_defaults():
     assert 'Groceries' in CATEGORIES
     assert 'Other' in CATEGORIES
     assert len(CATEGORIES) == 9
+
+
+@patch('src.categorizer.Anthropic')
+def test_categorize_transactions_falls_back_on_failure(mock_anthropic_class, monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
+
+    mock_client = MagicMock()
+    mock_anthropic_class.return_value = mock_client
+    mock_client.messages.create.side_effect = Exception("API unavailable")
+
+    result = categorize_transactions(SAMPLE_TRANSACTIONS)
+
+    assert len(result) == 2
+    assert all(r['claude_category'] == 'Uncategorized' for r in result)
+    assert all('API error' in r['claude_reasoning'] for r in result)
+    assert mock_client.messages.create.call_count == 2  # tried twice

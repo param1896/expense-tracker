@@ -51,21 +51,37 @@ Respond with a JSON array. Each element must have:
 
 Return ONLY valid JSON, no other text."""
 
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    last_error = None
+    for attempt in range(2):
+        try:
+            response = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            results = json.loads(response.content[0].text)
+            results_by_index = {r["index"]: r for r in results}
 
-    results = json.loads(response.content[0].text)
-    results_by_index = {r["index"]: r for r in results}
+            return [
+                {
+                    **t,
+                    "claude_category": results_by_index.get(i + 1, {}).get("category", "Uncategorized"),
+                    "claude_reasoning": results_by_index.get(i + 1, {}).get("reasoning", "Missing from Claude response"),
+                    "period": t["date"][:7],
+                }
+                for i, t in enumerate(transactions)
+            ]
+        except Exception as e:
+            last_error = e
+            continue
 
+    # Both attempts failed — return transactions as Uncategorized
     return [
         {
             **t,
-            "claude_category": results_by_index[i + 1]["category"],
-            "claude_reasoning": results_by_index[i + 1]["reasoning"],
+            "claude_category": "Uncategorized",
+            "claude_reasoning": f"API error after 2 attempts: {last_error}",
             "period": t["date"][:7],
         }
-        for i, t in enumerate(transactions)
+        for t in transactions
     ]
