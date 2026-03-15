@@ -38,7 +38,7 @@ BATCH_SIZE = 50  # ~1500 tokens output per batch, well within limits
 def _categorize_batch(client: Anthropic, batch: List[Dict], offset: int) -> List[Dict]:
     """Categorize a single batch of transactions. Returns the batch with categories filled in."""
     txn_list = "\n".join([
-        f"{offset + i + 1}. {t['merchant']} — ${t['amount']:.2f} on {t['date']} (hint: {t['plaid_category']})"
+        f"{offset + i + 1}. {t['merchant']} — ${float(t['amount']):.2f} on {t['date']} (hint: {t['plaid_category']})"
         for i, t in enumerate(batch)
     ])
 
@@ -74,7 +74,6 @@ Return ONLY valid JSON, no other text."""
                     **t,
                     "claude_category": results_by_index.get(offset + i + 1, {}).get("category", "Uncategorized"),
                     "claude_reasoning": results_by_index.get(offset + i + 1, {}).get("reasoning", ""),
-                    "period": t["date"][:7],
                 }
                 for i, t in enumerate(batch)
             ]
@@ -88,7 +87,6 @@ Return ONLY valid JSON, no other text."""
             **t,
             "claude_category": "Uncategorized",
             "claude_reasoning": f"Batch error: {last_error}",
-            "period": t["date"][:7],
         }
         for t in batch
     ]

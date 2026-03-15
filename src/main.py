@@ -6,7 +6,14 @@ from dotenv import load_dotenv
 
 from src.teller_client import fetch_transactions
 from src.categorizer import categorize_transactions
-from src.sheets_writer import append_transactions, update_dashboard_data, read_all_transactions, clear_transactions
+from src.sheets_writer import (
+    append_transactions,
+    get_uncategorized_transactions,
+    update_transaction_categories,
+    update_dashboard_data,
+    read_all_transactions,
+    clear_transactions,
+)
 from src.insights import generate_insights
 
 REQUIRED_ENV_VARS = [
@@ -51,13 +58,19 @@ def run() -> None:
         print("No new transactions found. Exiting.")
         return
 
-    print("Categorizing transactions with Claude...")
-    categorized = categorize_transactions(transactions)
-    print(f"  Categorized {len(categorized)} transactions.")
+    print("Persisting raw transactions to Google Sheet...")
+    new_count = append_transactions(transactions, spreadsheet_id)
+    print(f"  Wrote {new_count} new transactions ({len(transactions) - new_count} already existed).")
 
-    print("Appending new transactions to Google Sheet...")
-    new_count = append_transactions(categorized, spreadsheet_id)
-    print(f"  Wrote {new_count} new transactions ({len(categorized) - new_count} already existed).")
+    print("Categorizing uncategorized transactions with Claude...")
+    uncategorized = get_uncategorized_transactions(spreadsheet_id)
+    print(f"  Found {len(uncategorized)} uncategorized transactions.")
+    if uncategorized:
+        row_nums = [r for r, _ in uncategorized]
+        txns = [t for _, t in uncategorized]
+        categorized = categorize_transactions(txns)
+        update_transaction_categories(list(zip(row_nums, categorized)), spreadsheet_id)
+        print(f"  Categorized and updated {len(categorized)} transactions.")
 
     print("Reading full transaction history for insights and dashboard...")
     all_transactions = read_all_transactions(spreadsheet_id)

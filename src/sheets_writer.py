@@ -62,6 +62,12 @@ def clear_transactions(spreadsheet_id: str) -> None:
 
 
 def append_transactions(transactions: List[Dict], spreadsheet_id: str) -> int:
+    """Write new raw transactions to the sheet immediately (categories left blank).
+
+    Persisting before categorization means a Claude API failure won't lose
+    the fetched data — uncategorized rows can be picked up and filled in on
+    the next run or by categorize_and_update_sheet().
+    """
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
     ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
@@ -75,9 +81,69 @@ def append_transactions(transactions: List[Dict], spreadsheet_id: str) -> int:
     if not new_txns:
         return 0
 
-    rows = [[t.get(h, '') for h in TRANSACTION_HEADERS] for t in new_txns]
+    # Compute period here (date[:7]); leave claude_category and claude_reasoning blank
+    rows = [
+        [
+            t.get('transaction_id', ''),
+            t.get('date', ''),
+            t.get('merchant', ''),
+            t.get('amount', ''),
+            t.get('plaid_category', ''),
+            '',   # claude_category — filled in by categorize_and_update_sheet
+            '',   # claude_reasoning
+            t.get('date', '')[:7],  # period
+        ]
+        for t in new_txns
+    ]
     ws.append_rows(rows, value_input_option='USER_ENTERED')
     return len(new_txns)
+
+
+def get_uncategorized_transactions(spreadsheet_id: str) -> List[Tuple[int, Dict]]:
+    """Return (1-indexed sheet row number, transaction dict) for every row
+    whose claude_category is blank — these still need to be categorized."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
+
+    all_values = ws.get_all_values()
+    if len(all_values) < 2:
+        return []
+
+    headers = all_values[0]
+    try:
+        cat_col_idx = headers.index('claude_category')
+    except ValueError:
+        return []
+
+    results = []
+    for sheet_row_num, row in enumerate(all_values[1:], start=2):  # row 1 = header
+        cat_value = row[cat_col_idx] if cat_col_idx < len(row) else ''
+        if not cat_value:
+            txn = {headers[i]: (row[i] if i < len(row) else '') for i in range(len(headers))}
+            results.append((sheet_row_num, txn))
+    return results
+
+
+def update_transaction_categories(row_txn_pairs: List[Tuple[int, Dict]], spreadsheet_id: str) -> None:
+    """Batch-update claude_category and claude_reasoning for the given sheet rows."""
+    if not row_txn_pairs:
+        return
+
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
+
+    headers = ws.row_values(1)
+    cat_col = headers.index('claude_category') + 1    # gspread is 1-indexed
+    reason_col = headers.index('claude_reasoning') + 1
+
+    cells = []
+    for row_num, txn in row_txn_pairs:
+        cells.append(gspread.Cell(row_num, cat_col, txn.get('claude_category', '')))
+        cells.append(gspread.Cell(row_num, reason_col, txn.get('claude_reasoning', '')))
+
+    ws.update_cells(cells)
 
 
 def read_all_transactions(spreadsheet_id: str) -> List[Dict]:
