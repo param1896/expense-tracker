@@ -31,7 +31,10 @@ class ConfigError(Exception):
 
 
 def validate_env() -> None:
-    missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
+    skip_fetch = os.environ.get('SKIP_FETCH', 'false').lower() == 'true'
+    teller_vars = {'TELLER_CERT', 'TELLER_KEY', 'TELLER_ACCESS_TOKEN'}
+    required = [v for v in REQUIRED_ENV_VARS if not (skip_fetch and v in teller_vars)]
+    missing = [v for v in required if not os.environ.get(v)]
     if missing:
         raise ConfigError(
             f"Missing required environment variables: {', '.join(missing)}\n"
@@ -50,17 +53,21 @@ def run() -> None:
         clear_transactions(spreadsheet_id)
         print("  Transactions tab cleared.")
 
-    print("Fetching transactions from Teller (2025-01-01 onwards)...")
-    transactions = fetch_transactions(start_date='2025-01-01')
-    print(f"  Fetched {len(transactions)} transactions.")
+    if os.environ.get('SKIP_FETCH', 'false').lower() != 'true':
+        print("Fetching transactions from Teller (2025-01-01 onwards)...")
+        transactions = fetch_transactions(start_date='2025-01-01')
+        print(f"  Fetched {len(transactions)} transactions.")
 
-    if not transactions:
-        print("No new transactions found. Exiting.")
-        return
+        if not transactions:
+            print("No new transactions found. Exiting.")
+            return
 
-    print("Persisting raw transactions to Google Sheet...")
-    new_count = append_transactions(transactions, spreadsheet_id)
-    print(f"  Wrote {new_count} new transactions ({len(transactions) - new_count} already existed).")
+        print("Persisting raw transactions to Google Sheet...")
+        new_count = append_transactions(transactions, spreadsheet_id)
+        print(f"  Wrote {new_count} new transactions ({len(transactions) - new_count} already existed).")
+    else:
+        print("SKIP_FETCH=true — skipping Teller fetch, using existing sheet data.")
+        new_count = 0
 
     print("Categorizing uncategorized transactions with Claude...")
     uncategorized = get_uncategorized_transactions(spreadsheet_id)
