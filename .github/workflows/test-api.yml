@@ -1,0 +1,20 @@
+name: Test Anthropic API
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic -q
+          python3 -c "
+import os
+from anthropic import Anthropic
+key = os.environ.get('ANTHROPIC_API_KEY', '')
+print(f'Key prefix: {key[:12]}...')
+client = Anthropic()
+r = client.messages.create(model='claude-haiku-4-5-20251001', max_tokens=32, messages=[{'role':'user','content':'say ok'}])
+print('API OK:', r.content[0].text)
+"
