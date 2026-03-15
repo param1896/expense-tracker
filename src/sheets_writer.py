@@ -4,10 +4,11 @@ import base64
 import json
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Tuple
 
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 
 from src.categorizer import CATEGORIES as CATEGORIES_LIST
 
@@ -22,18 +23,25 @@ TRANSACTION_HEADERS = [
 ]
 
 
-def get_sheets_client():
+def _get_creds():
     creds_json = base64.b64decode(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON']).decode()
     creds_dict = json.loads(creds_json)
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    return gspread.authorize(creds)
+    return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+
+
+def get_sheets_client():
+    return gspread.authorize(_get_creds())
+
+
+def get_sheets_service():
+    return build('sheets', 'v4', credentials=_get_creds())
 
 
 def _get_or_create_worksheet(spreadsheet, name: str):
     try:
         return spreadsheet.worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
-        return spreadsheet.add_worksheet(title=name, rows=5000, cols=20)
+        return spreadsheet.add_worksheet(title=name, rows=5000, cols=50)
 
 
 def _get_existing_ids(worksheet) -> Set[str]:
@@ -42,6 +50,15 @@ def _get_existing_ids(worksheet) -> Set[str]:
         return {str(r.get('transaction_id', '')) for r in records if r.get('transaction_id')}
     except Exception:
         return set()
+
+
+def clear_transactions(spreadsheet_id: str) -> None:
+    """Wipe the Transactions tab (headers + all rows) for a clean backfill."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
+    ws.clear()
+    ws.update('A1', [TRANSACTION_HEADERS])
 
 
 def append_transactions(transactions: List[Dict], spreadsheet_id: str) -> int:
@@ -63,15 +80,6 @@ def append_transactions(transactions: List[Dict], spreadsheet_id: str) -> int:
     return len(new_txns)
 
 
-def clear_transactions(spreadsheet_id: str) -> None:
-    """Wipe the Transactions tab (headers + all rows) for a clean backfill."""
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
-    ws.clear()
-    ws.update('A1', [TRANSACTION_HEADERS])
-
-
 def read_all_transactions(spreadsheet_id: str) -> List[Dict]:
     """Read all transactions from the Transactions tab for full historical context."""
     client = get_sheets_client()
@@ -80,12 +88,144 @@ def read_all_transactions(spreadsheet_id: str) -> List[Dict]:
     return ws.get_all_records()
 
 
+def _delete_existing_charts(service, spreadsheet_id: str, sheet_id: int) -> None:
+    """Delete all charts currently on the given sheet."""
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    requests = []
+    for sheet in meta['sheets']:
+        if sheet['properties']['sheetId'] == sheet_id:
+            for chart in sheet.get('charts', []):
+                requests.append({'deleteEmbeddedObject': {'objectId': chart['chartId']}})
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests},
+        ).execute()
+
+
+def _build_chart_requests(
+    sheet_id: int,
+    pie_data_rows: Tuple[int, int],   # (start_row_idx, end_row_idx) — data only, no header
+    bar_section_rows: Tuple[int, int], # (header_row_idx, end_row_idx) — includes header
+    num_categories: int,
+) -> list:
+    """
+    Build batchUpdate requests for:
+    1. Pie chart — This Month's Breakdown, with labels like "Dining Out ($1,200)"
+    2. Stacked column bar chart — Monthly spending by category over time
+    """
+
+    def rng(start_row, end_row, start_col, end_col):
+        return {
+            'sheetId': sheet_id,
+            'startRowIndex': start_row,
+            'endRowIndex': end_row,
+            'startColumnIndex': start_col,
+            'endColumnIndex': end_col,
+        }
+
+    def anchor(row, col):
+        return {'sheetId': sheet_id, 'rowIndex': row, 'columnIndex': col}
+
+    pie_start, pie_end = pie_data_rows
+    bar_header, bar_end = bar_section_rows
+
+    # ── Pie chart ──────────────────────────────────────────────────────────
+    # Domain: col A = "Category ($amount)" labels (encoded dollar values)
+    # Series: col B = amounts
+    # LABELED_LEGEND shows the label text directly on each slice
+    pie_chart = {
+        'addChart': {
+            'chart': {
+                'spec': {
+                    'title': "This Month's Spending",
+                    'pieChart': {
+                        'legendPosition': 'LABELED_LEGEND',
+                        'pieHole': 0,
+                        'domain': {
+                            'sourceRange': {'sources': [rng(pie_start, pie_end, 0, 1)]}
+                        },
+                        'series': {
+                            'sourceRange': {'sources': [rng(pie_start, pie_end, 1, 2)]}
+                        },
+                    },
+                },
+                'position': {
+                    'overlayPosition': {
+                        'anchorCell': anchor(pie_start - 2, 4),
+                        'widthPixels': 600,
+                        'heightPixels': 420,
+                    }
+                },
+            }
+        }
+    }
+
+    # ── Stacked column bar chart ───────────────────────────────────────────
+    # bar_header row: "Month | Cat1 | Cat2 | ..."
+    # Data rows below: one row per month, amounts per category
+    # Domain: Month column (col 0)
+    # Series: one per active category (cols 1..num_categories)
+    bar_series = [
+        {
+            'series': {
+                'sourceRange': {'sources': [rng(bar_header, bar_end, col, col + 1)]}
+            },
+            'targetAxis': 'LEFT_AXIS',
+        }
+        for col in range(1, num_categories + 1)
+    ]
+
+    bar_chart = {
+        'addChart': {
+            'chart': {
+                'spec': {
+                    'title': 'Monthly Spending by Category',
+                    'basicChart': {
+                        'chartType': 'COLUMN',
+                        'stackedType': 'STACKED',
+                        'legendPosition': 'RIGHT_LEGEND',
+                        'axis': [
+                            {'position': 'BOTTOM_AXIS', 'title': 'Month'},
+                            {'position': 'LEFT_AXIS', 'title': 'Total Spend (USD)'},
+                        ],
+                        'domains': [{
+                            'domain': {
+                                'sourceRange': {'sources': [rng(bar_header, bar_end, 0, 1)]}
+                            }
+                        }],
+                        'series': bar_series,
+                    },
+                },
+                'position': {
+                    'overlayPosition': {
+                        'anchorCell': anchor(bar_header - 1, 4),
+                        'widthPixels': 820,
+                        'heightPixels': 460,
+                    }
+                },
+            }
+        }
+    }
+
+    return [pie_chart, bar_chart]
+
+
 def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, insights_text: str = "") -> None:
-    """Rebuilds the Dashboard tab with trend tables and Claude insights."""
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
+    """Rebuilds the Dashboard tab with trend tables, then deletes and recreates charts."""
+    gc = get_sheets_client()
+    service = get_sheets_service()
+    spreadsheet = gc.open_by_key(spreadsheet_id)
     ws = _get_or_create_worksheet(spreadsheet, 'Dashboard')
     ws.clear()
+
+    # Resolve Dashboard sheet ID for the Charts API
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    dashboard_sheet_id = next(
+        s['properties']['sheetId']
+        for s in meta['sheets']
+        if s['properties']['title'] == 'Dashboard'
+    )
 
     if not all_transactions:
         ws.update('A1', [['No transaction data available.']])
@@ -96,54 +236,58 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     current_period = periods[-1]
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M UTC')
 
-    # Build pivot: period -> category -> total
     pivot: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for t in all_transactions:
         pivot[t['period']][t['claude_category']] += float(t['amount'])
 
     monthly_totals = {p: sum(pivot[p].values()) for p in periods}
 
-    # Build all rows in one list, send in a single API call
-    all_rows = []
+    all_rows: List[list] = []
+    row = 0  # current 0-based row index, tracks where we are as we build
 
     def blank(n=1):
+        nonlocal row
         for _ in range(n):
             all_rows.append([])
+            row += 1
 
     def heading(text):
+        nonlocal row
         all_rows.append([text])
+        row += 1
+
+    def data_row(r):
+        nonlocal row
+        all_rows.append(r)
+        row += 1
 
     # ── Section 1: Monthly Spending Trend ─────────────────────────────────
     heading(f'MONTHLY SPENDING TREND  (last updated: {timestamp})')
-    all_rows.append(['Period', 'Total Spent', 'vs Prior Month', 'vs 3-Month Avg'])
+    data_row(['Period', 'Total Spent', 'vs Prior Month', 'vs 3-Month Avg'])
     for i, p in enumerate(periods):
         total = monthly_totals[p]
         prior = monthly_totals[periods[i - 1]] if i > 0 else None
         delta_str = ''
         if prior and prior > 0:
             pct = (total - prior) / prior * 100
-            sign = '+' if pct >= 0 else ''
-            delta_str = f'{sign}{pct:.1f}%'
+            delta_str = f'{"+" if pct >= 0 else ""}{pct:.1f}%'
         window = [monthly_totals[periods[j]] for j in range(max(0, i - 3), i)]
         avg3 = sum(window) / len(window) if window else None
         avg3_str = ''
         if avg3 and avg3 > 0:
             pct = (total - avg3) / avg3 * 100
-            sign = '+' if pct >= 0 else ''
-            avg3_str = f'{sign}{pct:.1f}%'
-        all_rows.append([p, round(total, 2), delta_str, avg3_str])
+            avg3_str = f'{"+" if pct >= 0 else ""}{pct:.1f}%'
+        data_row([p, round(total, 2), delta_str, avg3_str])
     blank(2)
 
     # ── Section 2: Spending by Category (All Months) ──────────────────────
     heading('SPENDING BY CATEGORY — ALL MONTHS')
-    cat_header = ['Category'] + periods + ['TOTAL', 'MONTHLY AVG']
-    all_rows.append(cat_header)
+    data_row(['Category'] + periods + ['TOTAL', 'MONTHLY AVG'])
     for cat in categories:
         row_vals = [round(pivot[p].get(cat, 0), 2) for p in periods]
         total = sum(row_vals)
-        avg = total / len(periods) if periods else 0
         if total > 0:
-            all_rows.append([cat] + row_vals + [round(total, 2), round(avg, 2)])
+            data_row([cat] + row_vals + [round(total, 2), round(total / len(periods), 2)])
     blank(2)
 
     # ── Section 3: 2025 vs 2026 Year Comparison ───────────────────────────
@@ -152,22 +296,20 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     months_2026 = len(periods_2026)
 
     heading('2025 vs 2026 — YEAR COMPARISON')
-    all_rows.append(['Category', '2025 Total', '2026 YTD', '2026 Monthly Avg', 'Trend'])
+    data_row(['Category', '2025 Total', '2026 YTD', '2026 Monthly Avg', 'Trend'])
     for cat in categories:
         total_2025 = sum(pivot[p].get(cat, 0) for p in periods_2025)
         total_2026 = sum(pivot[p].get(cat, 0) for p in periods_2026)
-        avg_2026 = total_2026 / months_2026 if months_2026 else 0
         if total_2025 == 0 and total_2026 == 0:
             continue
-        # Compare 2026 monthly avg vs 2025 monthly avg
         avg_2025 = total_2025 / len(periods_2025) if periods_2025 else 0
+        avg_2026 = total_2026 / months_2026 if months_2026 else 0
         if avg_2025 > 0:
             pct = (avg_2026 - avg_2025) / avg_2025 * 100
-            sign = '+' if pct >= 0 else ''
-            trend = f'{sign}{pct:.0f}% vs 2025 avg'
+            trend = f'{"+" if pct >= 0 else ""}{pct:.0f}% vs 2025 avg'
         else:
             trend = 'New in 2026' if total_2026 > 0 else ''
-        all_rows.append([cat, round(total_2025, 2), round(total_2026, 2), round(avg_2026, 2), trend])
+        data_row([cat, round(total_2025, 2), round(total_2026, 2), round(avg_2026, 2), trend])
     blank(2)
 
     # ── Section 4: Top 10 Merchants (All Time) ────────────────────────────
@@ -179,30 +321,56 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
     top10 = sorted(merchant_totals.items(), key=lambda x: x[1], reverse=True)[:10]
 
     heading('TOP 10 MERCHANTS — ALL TIME')
-    all_rows.append(['Merchant', 'Total Spent', '# Transactions', 'Avg per Transaction'])
+    data_row(['Merchant', 'Total Spent', '# Transactions', 'Avg per Transaction'])
     for m, amt in top10:
         count = merchant_count[m]
-        all_rows.append([m, round(amt, 2), count, round(amt / count, 2)])
+        data_row([m, round(amt, 2), count, round(amt / count, 2)])
     blank(2)
 
-    # ── Section 5: This Month's Breakdown ─────────────────────────────────
+    # ── Section 5: This Month's Breakdown — pie chart source ──────────────
     current_month_total = monthly_totals.get(current_period, 0)
-    heading(f'THIS MONTH\'S BREAKDOWN ({current_period})')
-    all_rows.append(['Category', 'Amount', '% of Total'])
-    month_rows = [
-        (cat, round(pivot[current_period].get(cat, 0), 2))
-        for cat in categories
-        if pivot[current_period].get(cat, 0) > 0
-    ]
-    month_rows.sort(key=lambda x: x[1], reverse=True)
-    for cat, amt in month_rows:
+    heading(f"THIS MONTH'S BREAKDOWN ({current_period})")
+    data_row(['Category', 'Amount', '% of Total'])
+    month_rows_sorted = sorted(
+        [(cat, round(pivot[current_period].get(cat, 0), 2)) for cat in categories
+         if pivot[current_period].get(cat, 0) > 0],
+        key=lambda x: x[1], reverse=True,
+    )
+    pie_data_start = row  # first data row (after heading + header)
+    for cat, amt in month_rows_sorted:
         pct = f'{amt / current_month_total * 100:.1f}%' if current_month_total > 0 else ''
-        all_rows.append([cat, amt, pct])
+        label = f'{cat} (${amt:,.0f})'  # dollar value baked into label for pie chart
+        data_row([label, amt, pct])
+    pie_data_end = row  # exclusive end
     blank(2)
 
-    # ── Section 6: Claude Insights & Savings Opportunities ────────────────
+    # ── Section 6: Monthly Category Breakdown — stacked bar chart source ──
+    active_cats = [c for c in categories if any(pivot[p].get(c, 0) > 0 for p in periods)]
+    heading('MONTHLY CATEGORY BREAKDOWN')
+    bar_header_row = row  # the column-header row for the chart domain
+    data_row(['Month'] + active_cats)
+    for p in periods:
+        data_row([p] + [round(pivot[p].get(c, 0), 2) for c in active_cats])
+    bar_data_end = row  # exclusive end
+    blank(2)
+
+    # ── Section 7: Claude Insights & Savings Opportunities ────────────────
     if insights_text:
         heading('CLAUDE INSIGHTS & SAVINGS OPPORTUNITIES')
-        all_rows.append([insights_text])
+        data_row([insights_text])
 
+    # Write all data in one API call
     ws.update('A1', all_rows)
+
+    # Delete existing charts and redraw with correct row positions
+    _delete_existing_charts(service, spreadsheet_id, dashboard_sheet_id)
+    chart_requests = _build_chart_requests(
+        sheet_id=dashboard_sheet_id,
+        pie_data_rows=(pie_data_start, pie_data_end),
+        bar_section_rows=(bar_header_row, bar_data_end),
+        num_categories=len(active_cats),
+    )
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={'requests': chart_requests},
+    ).execute()
