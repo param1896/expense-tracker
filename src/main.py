@@ -19,10 +19,14 @@ REQUIRED_ENV_VARS = [
 ]
 
 
+class ConfigError(Exception):
+    pass
+
+
 def validate_env() -> None:
     missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
     if missing:
-        raise EnvironmentError(
+        raise ConfigError(
             f"Missing required environment variables: {', '.join(missing)}\n"
             f"See .env.example for the full list of required variables."
         )
@@ -73,7 +77,7 @@ def run() -> None:
 if __name__ == '__main__':
     try:
         run()
-    except EnvironmentError as e:
+    except ConfigError as e:
         print(f"Configuration error:\n{e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:

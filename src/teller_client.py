@@ -61,24 +61,38 @@ def fetch_transactions(days_back: int = 16, start_date: str = None) -> List[Dict
     all_transactions = []
     for account in accounts:
         account_id = account['id']
-        params = {'start_date': start_date}
-        page_from = None
+        # Try the requested start_date; if Teller returns 404 (no data that far back),
+        # fall back to whatever Teller has available (omit start_date).
+        for attempt_params in [{'start_date': start_date}, {}]:
+            params = dict(attempt_params)
+            page_from = None
+            fetched = []
+            failed = False
 
-        while True:
-            if page_from:
-                params['from_id'] = page_from
-            resp = session.get(
-                f"{TELLER_API}/accounts/{account_id}/transactions",
-                params=params,
-            )
-            resp.raise_for_status()
-            page = resp.json()
-            if not page:
+            while True:
+                if page_from:
+                    params['from_id'] = page_from
+                resp = session.get(
+                    f"{TELLER_API}/accounts/{account_id}/transactions",
+                    params=params,
+                )
+                if resp.status_code == 404 and attempt_params:
+                    print(f"  Note: Teller returned 404 for start_date={start_date} "
+                          f"on account {account_id} — fetching all available history instead.")
+                    failed = True
+                    break
+                resp.raise_for_status()
+                page = resp.json()
+                if not page:
+                    break
+                fetched.extend(page)
+                if len(page) < 250:
+                    break
+                page_from = page[-1]['id']  # paginate backward
+
+            if not failed:
+                all_transactions.extend(fetched)
                 break
-            all_transactions.extend(page)
-            if len(page) < 250:
-                break
-            page_from = page[-1]['id']  # paginate backward
 
     return [
         {
