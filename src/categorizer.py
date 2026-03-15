@@ -67,7 +67,12 @@ Return ONLY valid JSON, no other text."""
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
-            results = json.loads(response.content[0].text)
+            raw = response.content[0].text
+            try:
+                results = json.loads(raw)
+            except json.JSONDecodeError as je:
+                print(f"    [batch {offset+1}] JSON parse error: {je}. Raw response[:200]: {raw[:200]}")
+                raise
             results_by_index = {r["index"]: r for r in results}
             return [
                 {
@@ -79,9 +84,11 @@ Return ONLY valid JSON, no other text."""
             ]
         except Exception as e:
             last_error = e
+            print(f"    [batch {offset+1}-{offset+len(batch)} attempt {attempt+1}] ERROR: {type(e).__name__}: {e}")
             continue
 
     # Both attempts failed for this batch
+    print(f"    [batch {offset+1}-{offset+len(batch)}] FAILED after 2 attempts: {last_error}")
     return [
         {
             **t,
