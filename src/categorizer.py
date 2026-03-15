@@ -108,4 +108,8 @@ def categorize_transactions(transactions: List[Dict]) -> List[Dict]:
         print(f"    Categorizing transactions {start + 1}–{end} of {total}...")
         results.extend(_categorize_batch(client, batch, offset=start))
 
+    # Report category distribution so we can catch silent failures
+    from collections import Counter
+    dist = Counter(r['claude_category'] for r in results)
+    print(f"    Category distribution: {dict(dist.most_common(5))}")
     return results

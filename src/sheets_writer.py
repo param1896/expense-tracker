@@ -386,3 +386,18 @@ def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, ins
         spreadsheetId=spreadsheet_id,
         body={'requests': chart_requests},
     ).execute()
+
+    # Verify: print what the charts actually reference
+    meta2 = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    for sheet in meta2['sheets']:
+        for chart in sheet.get('charts', []):
+            anchor = chart.get('position', {}).get('overlayPosition', {}).get('anchorCell', {})
+            spec = chart.get('spec', {})
+            pie = spec.get('pieChart')
+            basic = spec.get('basicChart')
+            if pie:
+                src = pie.get('series', {}).get('sourceRange', {}).get('sources', [{}])[0]
+                print(f"  [chart] PIE on sheetId={anchor.get('sheetId')} → data sheetId={src.get('sheetId')} rows {src.get('startRowIndex')}..{src.get('endRowIndex')}")
+            if basic:
+                src = basic.get('series', [{}])[0].get('series', {}).get('sourceRange', {}).get('sources', [{}])[0]
+                print(f"  [chart] BAR on sheetId={anchor.get('sheetId')} → data sheetId={src.get('sheetId')} rows {src.get('startRowIndex')}..{src.get('endRowIndex')}")
