@@ -4,15 +4,15 @@ import sys
 
 from dotenv import load_dotenv
 
-from src.plaid_client import fetch_transactions
+from src.teller_client import fetch_transactions
 from src.categorizer import categorize_transactions
 from src.sheets_writer import append_transactions, update_dashboard_data, read_all_transactions
 from src.insights import generate_insights
 
 REQUIRED_ENV_VARS = [
-    'PLAID_CLIENT_ID',
-    'PLAID_SECRET',
-    'PLAID_ACCESS_TOKEN',
+    'TELLER_CERT',
+    'TELLER_KEY',
+    'TELLER_ACCESS_TOKEN',
     'ANTHROPIC_API_KEY',
     'GOOGLE_SERVICE_ACCOUNT_JSON',
     'GOOGLE_SPREADSHEET_ID',

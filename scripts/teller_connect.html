@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Link your Amex — Expense Tracker</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; max-width: 500px; margin: 80px auto; padding: 20px; }
+        button { background: #0070f3; color: white; border: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #0051cc; }
+        #token-box { display: none; margin-top: 24px; }
+        #token-box h2 { color: #0a7c3e; }
+        textarea { width: 100%; height: 60px; font-family: monospace; font-size: 13px; margin-top: 8px; }
+        .instructions { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; padding: 16px; margin-top: 16px; }
+        code { background: #e5e7eb; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <h1>Link your Amex Account</h1>
+    <p>Click below to securely connect your American Express account to your expense tracker.</p>
+
+    <!-- Replace APP_ID_PLACEHOLDER with your real app ID before opening -->
+    <button onclick="tc.open()">Connect Amex</button>
+
+    <div id="token-box">
+        <h2>&#x2705; Connected!</h2>
+        <p>Copy this access token and paste it into your terminal:</p>
+        <textarea id="token-value" readonly></textarea>
+        <div class="instructions">
+            <strong>Run this command in your terminal:</strong><br><br>
+            <code id="command-text"></code>
+        </div>
+    </div>
+
+    <script src="https://cdn.teller.io/connect/connect.js"></script>
+    <script>
+        var APP_ID = "APP_ID_PLACEHOLDER";
+        var tc = TellerConnect.setup({
+            applicationId: APP_ID,
+            environment: "development",
+            products: ["transactions"],
+            onSuccess: function(enrollment) {
+                var token = enrollment.accessToken;
+                document.getElementById("token-value").value = token;
+                document.getElementById("command-text").textContent =
+                    '/Users/pkulkarni/.local/bin/gh secret set TELLER_ACCESS_TOKEN --body "' + token + '" --repo param1896/expense-tracker';
+                document.getElementById("token-box").style.display = "block";
+            },
+            onExit: function() {
+                console.log("User exited Teller Connect");
+            }
+        });
+    </script>
+</body>
+</html>
