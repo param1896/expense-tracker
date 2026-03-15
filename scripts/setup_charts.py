@@ -128,14 +128,14 @@ def build_chart_requests(dashboard_sheet_id: int) -> list:
                             "domains": [{
                                 "domain": {
                                     "sourceRange": {
-                                        "sources": [range_ref(dashboard_sheet_id, 16, 40, 0, 1)]
+                                        "sources": [range_ref(dashboard_sheet_id, 15, 40, 0, 1)]
                                     }
                                 }
                             }],
                             "series": [{
                                 "series": {
                                     "sourceRange": {
-                                        "sources": [range_ref(dashboard_sheet_id, 16, 40, 1, 2)]
+                                        "sources": [range_ref(dashboard_sheet_id, 15, 40, 1, 2)]
                                     }
                                 },
                                 "targetAxis": "LEFT_AXIS",
@@ -164,12 +164,12 @@ def build_chart_requests(dashboard_sheet_id: int) -> list:
                             "pieHole": 0.4,
                             "domain": {
                                 "sourceRange": {
-                                    "sources": [range_ref(dashboard_sheet_id, 27, 40, 0, 1)]
+                                    "sources": [range_ref(dashboard_sheet_id, 20, 40, 0, 1)]
                                 }
                             },
                             "series": {
                                 "sourceRange": {
-                                    "sources": [range_ref(dashboard_sheet_id, 27, 40, 1, 2)]
+                                    "sources": [range_ref(dashboard_sheet_id, 20, 40, 1, 2)]
                                 }
                             }
                         }
