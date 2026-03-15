@@ -78,11 +78,10 @@ def fetch_transactions(days_back: int = 16) -> List[Dict]:
             'transaction_id': t['id'],
             'date': t['date'],
             'merchant': (
-                t.get('details', {}).get('counterparty', {}).get('name')
-                or t.get('description', 'Unknown')
-            ),
+                (t.get('details') or {}).get('counterparty') or {}
+            ).get('name') or t.get('description', 'Unknown'),
             'amount': float(Decimal(t['amount'])),
-            'plaid_category': t.get('details', {}).get('category') or 'Unknown',
+            'plaid_category': (t.get('details') or {}).get('category') or 'Unknown',
         }
         for t in all_transactions
         if t.get('status') == 'posted'
