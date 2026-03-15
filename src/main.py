@@ -34,7 +34,7 @@ def run() -> None:
 
     spreadsheet_id = os.environ['GOOGLE_SPREADSHEET_ID']
 
-    print("Fetching transactions from Plaid...")
+    print("Fetching transactions from Teller...")
     transactions = fetch_transactions(days_back=16)
     print(f"  Fetched {len(transactions)} transactions.")
 
