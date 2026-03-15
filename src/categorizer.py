@@ -67,7 +67,14 @@ Return ONLY valid JSON, no other text."""
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw = response.content[0].text
+            raw = response.content[0].text.strip()
+            # Strip markdown code fences if Claude wraps the JSON
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]  # drop opening fence
+                if raw.startswith("json"):
+                    raw = raw[4:]             # drop "json" language tag
+                raw = raw.rsplit("```", 1)[0] # drop closing fence
+                raw = raw.strip()
             try:
                 results = json.loads(raw)
             except json.JSONDecodeError as je:
