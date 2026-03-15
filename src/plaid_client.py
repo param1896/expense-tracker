@@ -11,8 +11,15 @@ from plaid.exceptions import ApiException
 
 
 def get_plaid_client():
+    env_name = os.environ.get('PLAID_ENV', 'sandbox').lower()
+    plaid_env = {
+        'sandbox': Environment.Sandbox,
+        'development': Environment.Development,
+        'production': Environment.Production,
+    }.get(env_name, Environment.Sandbox)
+
     configuration = Configuration(
-        host=Environment.Production,
+        host=plaid_env,
         api_key={
             'clientId': os.environ['PLAID_CLIENT_ID'],
             'secret': os.environ['PLAID_SECRET'],
