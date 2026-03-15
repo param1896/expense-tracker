@@ -119,7 +119,7 @@ def get_uncategorized_transactions(spreadsheet_id: str) -> List[Tuple[int, Dict]
     results = []
     for sheet_row_num, row in enumerate(all_values[1:], start=2):  # row 1 = header
         cat_value = row[cat_col_idx] if cat_col_idx < len(row) else ''
-        if not cat_value:
+        if not cat_value or cat_value == 'Uncategorized':
             txn = {headers[i]: (row[i] if i < len(row) else '') for i in range(len(headers))}
             results.append((sheet_row_num, txn))
     return results
