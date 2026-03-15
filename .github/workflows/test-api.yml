@@ -1,5 +1,8 @@
 name: Test Anthropic API
-on: workflow_dispatch
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
