@@ -32,36 +32,30 @@ CATEGORY_DEFINITIONS = """
 """
 
 
-def categorize_transactions(transactions: List[Dict]) -> List[Dict]:
-    if not transactions:
-        return []
+BATCH_SIZE = 50  # ~1500 tokens output per batch, well within limits
 
-    client = Anthropic()
 
+def _categorize_batch(client: Anthropic, batch: List[Dict], offset: int) -> List[Dict]:
+    """Categorize a single batch of transactions. Returns the batch with categories filled in."""
     txn_list = "\n".join([
-        f"{i + 1}. {t['merchant']} — ${t['amount']:.2f} on {t['date']} (hint: {t['plaid_category']})"
-        for i, t in enumerate(transactions)
+        f"{offset + i + 1}. {t['merchant']} — ${t['amount']:.2f} on {t['date']} (hint: {t['plaid_category']})"
+        for i, t in enumerate(batch)
     ])
-
-    categories_str = "\n".join(f"- {c}" for c in CATEGORIES)
 
     prompt = f"""You are a personal finance categorizer. Assign each transaction to exactly one category.
 
-Category definitions — use these to decide:
+Category definitions:
 {CATEGORY_DEFINITIONS}
 
-For each transaction:
-- Identify what kind of business the merchant is (e.g. Sweetgreen = salad restaurant = Dining Out)
-- Use the amount as a signal if the merchant name is ambiguous
-- Use the hint category as a tiebreaker only
+For each transaction, identify the merchant type and assign the best-fit category.
 
 Transactions:
 {txn_list}
 
-Respond with a JSON array. Each element must have:
-- "index": transaction number (1-based)
-- "category": exactly one category from: {', '.join(CATEGORIES)}
-- "reasoning": one sentence identifying the merchant type and why this category fits
+Respond with a JSON array. Each element:
+- "index": transaction number shown above (starts at {offset + 1})
+- "category": exactly one of: {', '.join(CATEGORIES)}
+- "reasoning": one sentence
 
 Return ONLY valid JSON, no other text."""
 
@@ -75,27 +69,43 @@ Return ONLY valid JSON, no other text."""
             )
             results = json.loads(response.content[0].text)
             results_by_index = {r["index"]: r for r in results}
-
             return [
                 {
                     **t,
-                    "claude_category": results_by_index.get(i + 1, {}).get("category", "Uncategorized"),
-                    "claude_reasoning": results_by_index.get(i + 1, {}).get("reasoning", "Missing from Claude response"),
+                    "claude_category": results_by_index.get(offset + i + 1, {}).get("category", "Uncategorized"),
+                    "claude_reasoning": results_by_index.get(offset + i + 1, {}).get("reasoning", ""),
                     "period": t["date"][:7],
                 }
-                for i, t in enumerate(transactions)
+                for i, t in enumerate(batch)
             ]
         except Exception as e:
             last_error = e
             continue
 
-    # Both attempts failed — return transactions as Uncategorized
+    # Both attempts failed for this batch
     return [
         {
             **t,
             "claude_category": "Uncategorized",
-            "claude_reasoning": f"API error after 2 attempts: {last_error}",
+            "claude_reasoning": f"Batch error: {last_error}",
             "period": t["date"][:7],
         }
-        for t in transactions
+        for t in batch
     ]
+
+
+def categorize_transactions(transactions: List[Dict]) -> List[Dict]:
+    if not transactions:
+        return []
+
+    client = Anthropic()
+    results = []
+    total = len(transactions)
+
+    for start in range(0, total, BATCH_SIZE):
+        batch = transactions[start:start + BATCH_SIZE]
+        end = min(start + BATCH_SIZE, total)
+        print(f"    Categorizing transactions {start + 1}–{end} of {total}...")
+        results.extend(_categorize_batch(client, batch, offset=start))
+
+    return results
