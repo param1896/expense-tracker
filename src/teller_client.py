@@ -41,15 +41,21 @@ def fetch_transactions(days_back: int = 16) -> List[Dict]:
     # Get all accounts, filter for credit cards
     accounts_resp = session.get(f"{TELLER_API}/accounts")
     accounts_resp.raise_for_status()
+    all_accounts = accounts_resp.json()
     accounts = [
-        a for a in accounts_resp.json()
+        a for a in all_accounts
         if a.get('type') == 'credit' and a.get('subtype') == 'credit_card'
     ]
 
     if not accounts:
-        # Fall back to all accounts if no credit cards found (sandbox)
-        accounts_resp2 = session.get(f"{TELLER_API}/accounts")
-        accounts = accounts_resp2.json()
+        account_summary = [
+            f"{a.get('id')}: {a.get('institution', {}).get('name', '?')} {a.get('type')}/{a.get('subtype')}"
+            for a in all_accounts
+        ]
+        raise RuntimeError(
+            f"No credit card accounts found. Accounts returned by Teller: {account_summary}. "
+            "Check that TELLER_ACCESS_TOKEN is enrolled against your Amex credit card."
+        )
 
     all_transactions = []
     for account in accounts:
