@@ -14,7 +14,7 @@ def get_plaid_client():
     env_name = os.environ.get('PLAID_ENV', 'sandbox').lower()
     plaid_env = {
         'sandbox': Environment.Sandbox,
-        'development': Environment.Development,
+        'development': 'https://development.plaid.com',
         'production': Environment.Production,
     }.get(env_name, Environment.Sandbox)
 
