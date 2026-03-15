@@ -7,6 +7,7 @@ from plaid.api import plaid_api
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 from plaid import ApiClient, Configuration, Environment
+from plaid.exceptions import ApiException
 
 
 def get_plaid_client():
@@ -25,24 +26,39 @@ def fetch_transactions(days_back: int = 16) -> List[Dict]:
     end_date = date.today()
     start_date = end_date - timedelta(days=days_back)
 
-    request = TransactionsGetRequest(
-        access_token=os.environ['PLAID_ACCESS_TOKEN'],
-        start_date=start_date,
-        end_date=end_date,
-    )
-    response = client.transactions_get(request)
-    transactions = list(response['transactions'])
-
-    # Paginate if needed
-    while len(transactions) < response['total_transactions']:
+    try:
         request = TransactionsGetRequest(
             access_token=os.environ['PLAID_ACCESS_TOKEN'],
             start_date=start_date,
             end_date=end_date,
-            options=TransactionsGetRequestOptions(offset=len(transactions)),
         )
         response = client.transactions_get(request)
-        transactions.extend(response['transactions'])
+        transactions = list(response['transactions'])
+
+        # Paginate if needed
+        while len(transactions) < response['total_transactions']:
+            prev_count = len(transactions)
+            request = TransactionsGetRequest(
+                access_token=os.environ['PLAID_ACCESS_TOKEN'],
+                start_date=start_date,
+                end_date=end_date,
+                options=TransactionsGetRequestOptions(offset=len(transactions)),
+            )
+            response = client.transactions_get(request)
+            transactions.extend(response['transactions'])
+            if len(transactions) == prev_count:
+                break  # No progress — avoid infinite loop
+
+    except ApiException as e:
+        body = e.body if isinstance(e.body, dict) else {}
+        error_code = body.get('error_code', '')
+        if error_code == 'ITEM_LOGIN_REQUIRED':
+            raise RuntimeError(
+                "Amex re-authentication required. "
+                "Visit https://dashboard.plaid.com to relink your account, "
+                "then update PLAID_ACCESS_TOKEN in your GitHub secrets."
+            ) from e
+        raise
 
     return [
         {

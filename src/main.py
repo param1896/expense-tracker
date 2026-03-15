@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from src.plaid_client import fetch_transactions
 from src.categorizer import categorize_transactions
-from src.sheets_writer import append_transactions, update_dashboard_data
+from src.sheets_writer import append_transactions, update_dashboard_data, read_all_transactions
 from src.insights import generate_insights
 
 REQUIRED_ENV_VARS = [
@@ -50,12 +50,16 @@ def run() -> None:
     new_count = append_transactions(categorized, spreadsheet_id)
     print(f"  Wrote {new_count} new transactions ({len(categorized) - new_count} already existed).")
 
+    print("Reading full transaction history for insights and dashboard...")
+    all_transactions = read_all_transactions(spreadsheet_id)
+    print(f"  Loaded {len(all_transactions)} total transactions.")
+
     print("Generating Claude insights...")
-    insights = generate_insights(categorized)
+    insights = generate_insights(all_transactions)
     print("  Insights generated.")
 
     print("Updating Dashboard tab...")
-    update_dashboard_data(categorized, spreadsheet_id, insights_text=insights)
+    update_dashboard_data(all_transactions, spreadsheet_id, insights_text=insights)
     print("  Dashboard updated.")
 
     print(f"\nDone. {new_count} new transactions added, dashboard refreshed.")

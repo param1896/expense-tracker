@@ -63,6 +63,14 @@ def append_transactions(transactions: List[Dict], spreadsheet_id: str) -> int:
     return len(new_txns)
 
 
+def read_all_transactions(spreadsheet_id: str) -> List[Dict]:
+    """Read all transactions from the Transactions tab for full historical context."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    ws = _get_or_create_worksheet(spreadsheet, 'Transactions')
+    return ws.get_all_records()
+
+
 def update_dashboard_data(all_transactions: List[Dict], spreadsheet_id: str, insights_text: str = "") -> None:
     """Rebuilds the Dashboard tab with summary pivot tables and Claude insights."""
     client = get_sheets_client()

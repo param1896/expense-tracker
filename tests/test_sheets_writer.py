@@ -98,3 +98,26 @@ def test_append_transactions_returns_zero_when_all_exist(mock_get_client, monkey
 
     assert count == 0
     ws.append_rows.assert_not_called()
+
+
+@patch('src.sheets_writer.get_sheets_client')
+def test_read_all_transactions_returns_records(mock_get_client, monkeypatch):
+    monkeypatch.setenv('GOOGLE_SERVICE_ACCOUNT_JSON', 'dGVzdA==')
+
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+    mock_spreadsheet = MagicMock()
+    mock_client.open_by_key.return_value = mock_spreadsheet
+
+    ws = MagicMock()
+    ws.get_all_records.return_value = [
+        {'transaction_id': 'txn_1', 'amount': 14.50},
+        {'transaction_id': 'txn_2', 'amount': 15.99},
+    ]
+    mock_spreadsheet.worksheet.return_value = ws
+
+    from src.sheets_writer import read_all_transactions
+    result = read_all_transactions('sheet_id_123')
+
+    assert len(result) == 2
+    assert result[0]['transaction_id'] == 'txn_1'
