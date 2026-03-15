@@ -76,8 +76,8 @@ def fetch_transactions(days_back: int = 16, start_date: str = None) -> List[Dict
                     f"{TELLER_API}/accounts/{account_id}/transactions",
                     params=params,
                 )
-                if resp.status_code == 404 and attempt_params:
-                    print(f"  Note: Teller returned 404 for start_date={start_date} "
+                if resp.status_code in (404, 504) and attempt_params:
+                    print(f"  Note: Teller returned {resp.status_code} for start_date={start_date} "
                           f"on account {account_id} — fetching all available history instead.")
                     failed = True
                     break
