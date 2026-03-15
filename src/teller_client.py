@@ -34,9 +34,10 @@ def get_teller_session() -> requests.Session:
     return session
 
 
-def fetch_transactions(days_back: int = 16) -> List[Dict]:
+def fetch_transactions(days_back: int = 16, start_date: str = None) -> List[Dict]:
     session = get_teller_session()
-    start_date = (date.today() - timedelta(days=days_back)).isoformat()
+    if start_date is None:
+        start_date = (date.today() - timedelta(days=days_back)).isoformat()
 
     # Get all accounts, filter for credit cards
     accounts_resp = session.get(f"{TELLER_API}/accounts")

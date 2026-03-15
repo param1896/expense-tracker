@@ -5,7 +5,14 @@ on:
   schedule:
     # Runs at 9:00 AM UTC on the 1st and 15th of every month
     - cron: '0 9 1,15 * *'
-  workflow_dispatch:  # Allow manual trigger from GitHub UI for testing
+  workflow_dispatch:
+    inputs:
+      reset_data:
+        description: 'Clear Transactions tab and re-fetch all history from 2025-01-01'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
   run-tracker:
@@ -31,4 +38,5 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          RESET_DATA: ${{ github.event.inputs.reset_data || 'false' }}
         run: python -m src.main

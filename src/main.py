@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from src.teller_client import fetch_transactions
 from src.categorizer import categorize_transactions
-from src.sheets_writer import append_transactions, update_dashboard_data, read_all_transactions
+from src.sheets_writer import append_transactions, update_dashboard_data, read_all_transactions, clear_transactions
 from src.insights import generate_insights
 
 REQUIRED_ENV_VARS = [
@@ -34,8 +34,13 @@ def run() -> None:
 
     spreadsheet_id = os.environ['GOOGLE_SPREADSHEET_ID']
 
-    print("Fetching transactions from Teller...")
-    transactions = fetch_transactions(days_back=16)
+    if os.environ.get('RESET_DATA', 'false').lower() == 'true':
+        print("RESET_DATA=true — clearing Transactions tab for clean backfill...")
+        clear_transactions(spreadsheet_id)
+        print("  Transactions tab cleared.")
+
+    print("Fetching transactions from Teller (2025-01-01 onwards)...")
+    transactions = fetch_transactions(start_date='2025-01-01')
     print(f"  Fetched {len(transactions)} transactions.")
 
     if not transactions:

@@ -4,16 +4,32 @@ from typing import List, Dict
 from anthropic import Anthropic
 
 CATEGORIES = [
-    "Dining & Restaurants",
+    "Dining Out",
     "Groceries",
-    "Travel & Transport",
+    "Travel",
+    "Transportation",
     "Shopping",
-    "Subscriptions & Software",
-    "Health & Fitness",
+    "Subscriptions & Streaming",
+    "Health & Medical",
     "Entertainment",
-    "Utilities & Bills",
-    "Other",
+    "Home & Utilities",
+    "Personal Care",
+    "Miscellaneous",
 ]
+
+CATEGORY_DEFINITIONS = """
+- Dining Out: restaurants, cafes, bars, coffee shops, food delivery (DoorDash, UberEats, Grubhub, Caviar)
+- Groceries: supermarkets, grocery stores (Whole Foods, Trader Joe's, Safeway, Costco food runs)
+- Travel: flights, hotels, Airbnb, vacation rentals, travel agencies, international spending
+- Transportation: Uber, Lyft, taxis, parking, gas/fuel, transit passes, car maintenance, tolls
+- Shopping: Amazon, retail stores, clothing, electronics, department stores, online shopping
+- Subscriptions & Streaming: Netflix, Spotify, Hulu, Apple/Google services, news sites, SaaS tools, any recurring monthly/annual charge
+- Health & Medical: doctors, dentists, pharmacies, hospitals, gym memberships, fitness classes, health apps
+- Entertainment: concerts, movies, theaters, sporting events, amusement parks, games
+- Home & Utilities: electric/gas/water bills, phone bills, internet, rent, furniture, home improvement, cleaning services
+- Personal Care: salon, haircut, spa, massage, beauty products, grooming
+- Miscellaneous: anything that genuinely doesn't fit the above categories
+"""
 
 
 def categorize_transactions(transactions: List[Dict]) -> List[Dict]:
@@ -23,31 +39,29 @@ def categorize_transactions(transactions: List[Dict]) -> List[Dict]:
     client = Anthropic()
 
     txn_list = "\n".join([
-        f"{i + 1}. {t['merchant']} — ${t['amount']:.2f} on {t['date']} (Plaid: {t['plaid_category']})"
+        f"{i + 1}. {t['merchant']} — ${t['amount']:.2f} on {t['date']} (hint: {t['plaid_category']})"
         for i, t in enumerate(transactions)
     ])
 
     categories_str = "\n".join(f"- {c}" for c in CATEGORIES)
 
-    prompt = f"""You are a personal finance categorizer. Analyze each transaction carefully and assign it to exactly one category.
+    prompt = f"""You are a personal finance categorizer. Assign each transaction to exactly one category.
 
-Available categories:
-{categories_str}
+Category definitions — use these to decide:
+{CATEGORY_DEFINITIONS}
 
-For each transaction, examine:
-- The merchant name (look up what kind of business it is)
-- The amount (helps distinguish business type)
-- The date and Plaid category as additional context
-
-Provide detailed reasoning that demonstrates you've analyzed the specific merchant, not just matched keywords.
+For each transaction:
+- Identify what kind of business the merchant is (e.g. Sweetgreen = salad restaurant = Dining Out)
+- Use the amount as a signal if the merchant name is ambiguous
+- Use the hint category as a tiebreaker only
 
 Transactions:
 {txn_list}
 
 Respond with a JSON array. Each element must have:
 - "index": transaction number (1-based)
-- "category": exactly one category from the list above
-- "reasoning": 1-2 sentences explaining your analysis of this specific merchant and why this category fits
+- "category": exactly one category from: {', '.join(CATEGORIES)}
+- "reasoning": one sentence identifying the merchant type and why this category fits
 
 Return ONLY valid JSON, no other text."""
 

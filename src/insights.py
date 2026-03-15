@@ -29,7 +29,19 @@ def generate_insights(all_transactions: List[Dict]) -> str:
         for t in sorted(recent, key=lambda x: float(x['amount']), reverse=True)
     )
 
-    prompt = f"""You are a personal finance advisor reviewing monthly spending.
+    # All-time top merchants for subscription/pattern detection
+    all_merchant_totals: Dict[str, float] = defaultdict(float)
+    all_merchant_count: Dict[str, int] = defaultdict(int)
+    for t in all_transactions:
+        all_merchant_totals[t['merchant']] += float(t['amount'])
+        all_merchant_count[t['merchant']] += 1
+    top_merchants = sorted(all_merchant_totals.items(), key=lambda x: x[1], reverse=True)[:15]
+    top_merchants_lines = "\n".join(
+        f"  - {m}: ${amt:.2f} total ({all_merchant_count[m]} transactions)"
+        for m, amt in top_merchants
+    )
+
+    prompt = f"""You are a personal finance advisor reviewing spending data across {len(set(t['period'] for t in all_transactions))} months.
 
 Historical spending by period and category (USD):
 {summary_json}
@@ -37,25 +49,29 @@ Historical spending by period and category (USD):
 Individual transactions this period ({current_period}):
 {recent_lines}
 
-Write a concise spending analysis (under 350 words) with these sections:
+Top merchants all time:
+{top_merchants_lines}
+
+Write a spending analysis with these 5 sections. Be specific with dollar amounts. Use section headers in ALL CAPS. Skip any section where there is genuinely nothing notable.
 
 OVERSPENDING ALERTS
-List any categories where this period's spend is notably above the personal historical average. Include the current amount, average amount, and percentage difference.
+Categories where this period's spend is notably above the personal average. Include: current amount, average, % difference.
 
 UNUSUAL MERCHANTS
-Flag any one-off, unfamiliar, or suspicious charges that don't fit normal spending patterns.
+One-off, unfamiliar, or suspicious charges that don't fit normal patterns.
 
 SUBSCRIPTION CREEP
-Identify new recurring charges or subscriptions that increased compared to previous periods.
+New recurring charges or subscriptions that increased. Flag anything that looks like a trial that converted.
 
 POSITIVE CALLOUTS
-Highlight categories where spending is notably below average — good financial discipline.
+Categories where spending is notably below average — good financial discipline worth continuing.
 
-Be specific with dollar amounts. Use plain text with section headers in ALL CAPS. Skip any section where there's nothing notable to report."""
+SAVINGS OPPORTUNITIES
+Based on the full spending history, give 3–5 specific, actionable suggestions to reduce monthly expenses. Reference actual merchants and amounts. For example: identify subscriptions that could be cancelled, dining frequency that could be reduced, or patterns like frequent small purchases that add up. Be direct and practical — no generic advice."""
 
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=1024,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
     )
 
